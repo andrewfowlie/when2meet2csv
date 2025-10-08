@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 
 
 def unix2normal(unix):
-    stamp = datetime.datetime.fromtimestamp(int(unix))
+    stamp = datetime.datetime.fromtimestamp(int(unix), tz=datetime.UTC)
     return stamp.strftime('%d %b %H:%M')
 
 
