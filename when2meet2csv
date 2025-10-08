@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""
+CLI for fetching when2meet data and saving as CSV
+=================================================
+"""
+
+import datetime
+import re
+import requests
+
+import pandas as pd
+import click
+
+from bs4 import BeautifulSoup
+
+
+def unix2normal(unix):
+    stamp = datetime.datetime.fromtimestamp(int(unix))
+    return stamp.strftime('%d %b %H:%M')
+
+
+def block2hour(df, every_hour=4):
+    for ii in range(0, len(df) + every_hour, every_hour):
+        df.iloc[ii:ii + every_hour] = df.iloc[ii:ii +
+                                              every_hour].apply(lambda row: row.prod())
+    return df.iloc[::every_hour]
+
+
+class When2Meet:
+    def __init__(self, url):
+        self.url = url
+        page = requests.get(url)
+        self.soup = BeautifulSoup(page.content, "html.parser")
+
+    @property
+    def normal_time(self):
+        # When2Meet has its time in UNIX format in the following structure: TimeOfSlot[##]=UNIX Time;.
+        table_data = self.soup.find(string=re.compile('TimeOfSlot*'))
+        unix_time = re.compile(r"TimeOfSlot\[\d+\]=(\d+);").findall(table_data)
+        return [unix2normal(u) for u in unix_time]
+
+    @property
+    def nameid_names(self):
+        # In <div id=AvailabilityGrids><script type="text/javascript">, When2Meet lists the unique IDs and the corresponding names.
+        availability_grids = self.soup.find('div', {'id': 'AvailabilityGrids'})
+        script_tags = availability_grids.find_all(
+            'script', {'type': 'text/javascript'})
+        ids = re.findall(r'PeopleIDs\[\d+\] = (\d+);',
+                         script_tags[0].contents[0])
+        names = re.findall(
+            r"PeopleNames\[\d+\] = '([ a-zA-Z]{2,})';", script_tags[0].contents[0])
+        return dict(zip(ids, names))
+
+    @property
+    def slot_names(self):
+        # When2Meet uses the following structure to label who is available at a time slot: AvailableAtSlot[Index].push(Unique ID);
+        table_data = self.soup.find(string=re.compile('TimeOfSlot*'))
+        dataset = re.compile(
+            r"AvailableAtSlot\[(\d+)\]\.push\((\d+)\)").findall(table_data)
+        # Convert ID to Names
+        return [(slot, self.nameid_names[nameid]) for slot, nameid in dataset]
+
+    @property
+    def df(self):
+        df = pd.DataFrame(index=self.normal_time,
+                          columns=self.nameid_names.values())
+        for slot, names in self.slot_names:
+            col_pos = df.columns.get_loc(names)
+            df.iloc[int(slot), col_pos] = 1
+        df = df.infer_objects(copy=False).fillna(0)
+        return block2hour(df)
+
+    @property
+    def id(self):
+        return self.url.split("?")[1].rstrip("/")
+
+    def to_csv(self, file_name=None):
+        if file_name is None:
+            file_name = f"{self.id}.csv"
+        self.df.to_csv(file_name)
+
+
+@click.command()
+@click.option('--url', required=True, help='when2meet URL.')
+def cli(url):
+    """
+    Convert when2meet data at URL to CSV data.
+    """
+    data = When2Meet(url)
+    data.to_csv()
+
+
+if __name__ == '__main__':
+    cli()
