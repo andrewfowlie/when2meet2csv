@@ -8,6 +8,8 @@ import datetime
 import re
 import requests
 
+from functools import cached_property
+
 import pandas as pd
 import click
 
@@ -32,14 +34,14 @@ class When2Meet:
         page = requests.get(url)
         self.soup = BeautifulSoup(page.content, "html.parser")
 
-    @property
+    @cached_property
     def normal_time(self):
         # When2Meet has its time in UNIX format in the following structure: TimeOfSlot[##]=UNIX Time;.
         table_data = self.soup.find(string=re.compile('TimeOfSlot*'))
         unix_time = re.compile(r"TimeOfSlot\[\d+\]=(\d+);").findall(table_data)
         return [unix2normal(u) for u in unix_time]
 
-    @property
+    @cached_property
     def nameid_names(self):
         # In <div id=AvailabilityGrids><script type="text/javascript">, When2Meet lists the unique IDs and the corresponding names.
         availability_grids = self.soup.find('div', {'id': 'AvailabilityGrids'})
@@ -48,10 +50,10 @@ class When2Meet:
         ids = re.findall(r'PeopleIDs\[\d+\] = (\d+);',
                          script_tags[0].contents[0])
         names = re.findall(
-            r"PeopleNames\[\d+\] = '([ a-zA-Z]{2,})';", script_tags[0].contents[0])
+            r"PeopleNames\[\d+\] = '([^']*)';", script_tags[0].contents[0])
         return dict(zip(ids, names))
 
-    @property
+    @cached_property
     def slot_names(self):
         # When2Meet uses the following structure to label who is available at a time slot: AvailableAtSlot[Index].push(Unique ID);
         table_data = self.soup.find(string=re.compile('TimeOfSlot*'))
@@ -60,7 +62,7 @@ class When2Meet:
         # Convert ID to Names
         return [(slot, self.nameid_names[nameid]) for slot, nameid in dataset]
 
-    @property
+    @cached_property
     def df(self):
         df = pd.DataFrame(index=self.normal_time,
                           columns=self.nameid_names.values())
@@ -70,7 +72,7 @@ class When2Meet:
         df = df.infer_objects(copy=False).fillna(0)
         return block2hour(df)
 
-    @property
+    @cached_property
     def id(self):
         return self.url.split("?")[1].rstrip("/")
 
